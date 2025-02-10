@@ -1,10 +1,17 @@
-import { Box, Button, Container, TextField, CircularProgress } from "@mui/material";
-import pic1 from './assets/pic1.png';
-import { useRef, useState } from "react";
-
+import { Box, Button, Container, TextField, CircularProgress, Alert } from "@mui/material";
+import { useRef, useState, useEffect } from "react";
 import { initializeApp } from 'firebase/app';
-import { collection, query, addDoc, getDocs, setDoc, deleteDoc, doc, onSnapshot, getFirestore } from "firebase/firestore";
-
+import { 
+    collection, 
+    query, 
+    addDoc, 
+    getDocs, 
+    setDoc, 
+    deleteDoc, 
+    doc, 
+    onSnapshot, 
+    getFirestore 
+} from "firebase/firestore";
 
 const firebaseConfig = {
     apiKey: process.env.REACT_APP_API_KEY,
@@ -16,13 +23,14 @@ const firebaseConfig = {
     measurementId: process.env.REACT_APP_MEASUREMENT_ID
 };
 
-const REMOTE_CONTROL = "remoteControl"
-const MY_REMOTE_ID = "rameshremoteID"
+const REMOTE_CONTROL = "remoteControl";
+const MY_REMOTE_ID = "rameshremoteID";
 
+// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// Initialize WebRTC
+// WebRTC Configuration
 const servers = {
     iceServers: [
         {
@@ -31,341 +39,360 @@ const servers = {
                 "stun:stun2.l.google.com:19302",
             ],
         },
-        // {
-        //     urls: [process.env.REACT_APP_TURN_URL],
-        //     username: process.env.REACT_APP_TURN_USERNAME,
-        //     credential: process.env.REACT_APP_TURN_PASSWORD,
-        // },
     ],
     iceCandidatePoolSize: 10,
 };
 
-// initialize RTC with ice servers
-const pc = new RTCPeerConnection(servers);
-
-
-
-
-/*
-* We use a data channel to send injected coordinates, 
-* and this also triggers the onicecandidate method. 
-* Since we don't have a local stream, the onicecandidate event hasn't been called
-*/
-const dataChannel = pc.createDataChannel("channel");
-
-//we are receiving remote video only
-pc.addTransceiver('video');
-
-const remoteControl = collection(db, REMOTE_CONTROL);
-
-//put your react app remote id here. This will be used to identify while signaling 
-const myDoc = doc(db, REMOTE_CONTROL, MY_REMOTE_ID);
-const myOffer = collection(myDoc, "offer")
-const myiceCandidates = collection(myDoc, "iceCandidates")
-
 function Remote() {
     const localRef = useRef();
-    const [connect, SetConnect] = useState(false);
+    const [connect, setConnect] = useState(false);
     const [localStream, setLocalStream] = useState(null);
     const [isDragging, setIsDragging] = useState(false);
     const [isDown, setIsDown] = useState(false);
     const [loading, setLoading] = useState(false);
     const [remoteId, setRemoteId] = useState("");
     const [error, setError] = useState(false);
-    const [videoWidth, setVideoWidth] = useState(0);
-    const [videoHeight, setVideoHeight] = useState(0);
-    const [scaleX, setScaleXFactor] = useState(0);
-    const [scaleY, setScaleYFactor] = useState(0);
+    const [errorMessage, setErrorMessage] = useState("");
+    const [dimensions, setDimensions] = useState({ width: 270, height: 584 });
+    const [scaleFactor, setScaleFactor] = useState({ x: 1, y: 1 });
+    
+    // Create RTCPeerConnection and DataChannel refs to ensure persistence
+    const pcRef = useRef(null);
+    const dataChannelRef = useRef(null);
+
+    useEffect(() => {
+        // Initialize WebRTC connection
+        pcRef.current = new RTCPeerConnection(servers);
+        dataChannelRef.current = pcRef.current.createDataChannel("channel");
+        pcRef.current.addTransceiver('video');
+
+        // Cleanup on component unmount
+        return () => {
+            if (pcRef.current) {
+                pcRef.current.close();
+            }
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+            }
+        };
+    }, []);
+
+    // Handle window resize
+    useEffect(() => {
+        const handleResize = () => {
+            if (localRef.current) {
+                const videoElement = localRef.current;
+                const containerWidth = videoElement.parentElement.offsetWidth;
+                const aspectRatio = dimensions.height / dimensions.width;
+                
+                let newWidth = Math.min(containerWidth, dimensions.width);
+                let newHeight = newWidth * aspectRatio;
+
+                setDimensions({
+                    width: newWidth,
+                    height: newHeight
+                });
+            }
+        };
+
+        window.addEventListener('resize', handleResize);
+        handleResize();
+
+        return () => window.removeEventListener('resize', handleResize);
+    }, [dimensions.width, dimensions.height]);
 
     async function clearCollection(ref) {
-        const querySnapshot = await getDocs(ref);
-        querySnapshot.forEach((docc) => {
-            if (docc.exists)
-                deleteDoc(doc(ref, docc.id));
-            //await deleteDoc(doc(db, "cities", "DC"));
-
-        })
+        try {
+            const querySnapshot = await getDocs(ref);
+            const deletePromises = querySnapshot.docs.map(doc => 
+                deleteDoc(doc.ref)
+            );
+            await Promise.all(deletePromises);
+        } catch (error) {
+            console.error("Error clearing collection:", error);
+            setErrorMessage("Failed to clear previous session data");
+        }
     }
 
-
-    /*
-    * This will clear the previous existing data collections from firestore
-    * and set caller as ready
-    */
     const setStatus = async () => {
-        await clearCollection(myOffer)
-        await clearCollection(myiceCandidates)
-        await clearCollection(collection(db, REMOTE_CONTROL, remoteId, "answer"))
+        try {
+            await Promise.all([
+                clearCollection(collection(db, REMOTE_CONTROL, MY_REMOTE_ID, "offer")),
+                clearCollection(collection(db, REMOTE_CONTROL, MY_REMOTE_ID, "iceCandidates")),
+                clearCollection(collection(db, REMOTE_CONTROL, remoteId, "answer")),
+                clearCollection(collection(db, REMOTE_CONTROL, remoteId, "iceCandidates"))
+            ]);
+            await setDoc(doc(db, REMOTE_CONTROL, MY_REMOTE_ID), { "status": true });
+        } catch (error) {
+            console.error("Error setting status:", error);
+            setErrorMessage("Failed to initialize connection");
+            throw error;
+        }
+    };
 
-        await clearCollection(collection(db, REMOTE_CONTROL, remoteId, "iceCandidates"))
-        setDoc(myDoc, { "status": true })
-        //clear previous
-    }
+    const handleDeviceResolution = (dWidth, dHeight) => {
+        const containerWidth = localRef.current?.parentElement.offsetWidth || window.innerWidth;
+        const aspectRatio = dHeight / dWidth;
+        
+        let newWidth = Math.min(containerWidth, dWidth);
+        let newHeight = newWidth * aspectRatio;
 
+        setDimensions({ width: newWidth, height: newHeight });
+        setScaleFactor({
+            x: dWidth / newWidth,
+            y: dHeight / newHeight
+        });
+    };
 
-    /*
-    * update callee collection with caller information
-    * and listen for callee, Callee will provide signal that, he is ready and provide it's device resolution
-    */
     const setRequestToCallee = () => {
-
         setDoc(doc(db, REMOTE_CONTROL, remoteId), {
             caller: {
-                callerId: MY_REMOTE_ID, callerName: "Rames Pokhrel"
-            }
-        })
-
-        onSnapshot(doc(db, REMOTE_CONTROL, remoteId), (doc) => {
-            if (doc?.data()?.status) {
-                //update video width height
-                var dWidth = doc?.data()?.dWidth;//1080
-                var dHeight = doc?.data()?.dHeight;//2260
-
-                var scaleWidth = dWidth / 270
-                var scaleHeight = dHeight / 584
-
-                setScaleXFactor(scaleWidth)
-                setScaleYFactor(scaleHeight)
-
-                // setVideoWidth(270)
-                // setVideoHeight(584)
-
-                setIceAndOfferCandidates()
-
+                callerId: MY_REMOTE_ID,
+                callerName: "Remote Control"
             }
         });
 
-    }
-
+        onSnapshot(doc(db, REMOTE_CONTROL, remoteId), (doc) => {
+            const data = doc.data();
+            if (data?.status) {
+                handleDeviceResolution(data.dWidth, data.dHeight);
+                setIceAndOfferCandidates();
+            }
+        });
+    };
 
     const setIceAndOfferCandidates = async () => {
-
-        pc.onicecandidate = async (event) => {
-            if (event.candidate) {
-                var a = event.candidate.toJSON()
-                try {
-                    addDoc(myiceCandidates, a);
-                } catch (e) {
-                    console.log("djjdjd", e)
+        try {
+            pcRef.current.onicecandidate = async (event) => {
+                if (event.candidate) {
+                    await addDoc(
+                        collection(db, REMOTE_CONTROL, MY_REMOTE_ID, "iceCandidates"),
+                        event.candidate.toJSON()
+                    );
                 }
-            } else {
-                // All ICE candidates have been gathered
-                console.log('ICE Gathering Complete');
-            }
-        };
+            };
 
-        const offerDescription = await pc.createOffer();
-        await pc.setLocalDescription(offerDescription);
-        const offer = {
-            sdp: offerDescription.sdp,
-            type: offerDescription.type,
-        };
+            const offerDescription = await pcRef.current.createOffer();
+            await pcRef.current.setLocalDescription(offerDescription);
+            
+            await addDoc(collection(db, REMOTE_CONTROL, MY_REMOTE_ID, "offer"), {
+                sdp: offerDescription.sdp,
+                type: offerDescription.type,
+            });
 
-        await addDoc(myOffer, offer);
+            setupAnswerListener();
+        } catch (error) {
+            console.error("Error in ICE candidate setup:", error);
+            setErrorMessage("Failed to establish peer connection");
+        }
+    };
 
-        //listen for callee
-        const calleeIceCandidates = collection(db, REMOTE_CONTROL, remoteId, "iceCandidates");
+    const setupAnswerListener = () => {
         const calleeAnswer = collection(db, REMOTE_CONTROL, remoteId, "answer");
-
-
-        /*
-        * add remote description before to add remote ice candidates
-        * 
-        */
-
+        const calleeIceCandidates = collection(db, REMOTE_CONTROL, remoteId, "iceCandidates");
 
         onSnapshot(query(calleeAnswer), (snapshot) => {
-            snapshot.docChanges().forEach((change) => {
+            snapshot.docChanges().forEach(async (change) => {
                 if (change.type === "added") {
                     try {
-                        var a = change.doc.data();
-                        const candidate = new RTCSessionDescription(a);
-                        pc.setRemoteDescription(candidate)
-                            .then(() => {
-                                onSnapshot(query(calleeIceCandidates), (snapshot) => {
-                                    snapshot.docChanges().forEach((change) => {
-                                        if (change.type === "added") {
-                                            var a = change.doc.data()
-                                            const candidate = new RTCIceCandidate(
-                                                a
-                                            );
-                                            pc.addIceCandidate(candidate);
-                                        }
-                                    });
-                                });
-                            })
-                            .catch((error) => {
-                                console.error("Error setting remote description:", error);
+                        const answerDescription = new RTCSessionDescription(change.doc.data());
+                        await pcRef.current.setRemoteDescription(answerDescription);
+                        
+                        // Setup ICE candidate listener after remote description is set
+                        onSnapshot(query(calleeIceCandidates), (snapshot) => {
+                            snapshot.docChanges().forEach(async (change) => {
+                                if (change.type === "added") {
+                                    await pcRef.current.addIceCandidate(
+                                        new RTCIceCandidate(change.doc.data())
+                                    );
+                                }
                             });
-                    } catch (e) {
-                        console.log("e", e.error)
+                        });
+                    } catch (error) {
+                        console.error("Error processing answer:", error);
+                        setErrorMessage("Failed to process remote connection");
                     }
                 }
             });
         });
-        dataChannel.addEventListener('open', event => {
-            console.log("open channel")
-        });
-
-        // Disable input when closed
-        dataChannel.addEventListener('close', event => {
-            console.log("close channel")
-
-        });
-
-    }
-
-
-    /*
-    * disconnect all services
-    */
-    const hangUp = async () => {
-
-        pc.close();
-        if (localStream) {
-            localStream.getTracks().forEach((track) => {
-                track.stop();
-            });
-            setLocalStream(null);
-        }
-        SetConnect(false)
-        setLoading(false)
-        await clearCollection(myOffer)
-        await clearCollection(myiceCandidates)
-
-        setDoc(myDoc, { "status": false }, { merge: true })
-        setDoc(doc(db, REMOTE_CONTROL, remoteId), {})
-
-        window.location.reload();
     };
 
+    const handleMouseEvent = (event, type) => {
+        if (!dataChannelRef.current || dataChannelRef.current.readyState !== "open") {
+            return;
+        }
+
+        const rect = event.currentTarget.getBoundingClientRect();
+        const x = (event.clientX - rect.left) * scaleFactor.x;
+        const y = (event.clientY - rect.top) * scaleFactor.y;
+        
+        dataChannelRef.current.send(`${x}:${y}:${type}`);
+    };
 
     const setupSources = async () => {
         if (connect) {
-
-            hangUp()
-            return
+            await hangUp();
+            return;
         }
 
-        if (remoteId == "") {
-
-            setError(true)
-            return
+        if (!remoteId) {
+            setError(true);
+            setErrorMessage("Remote ID is required");
+            return;
         }
 
-        //setup status true/ client will check if remote server is ready or not
-        await setStatus()
-        setRequestToCallee()
+        try {
+            setLoading(true);
+            await setStatus();
+            setRequestToCallee();
 
+            const stream = new MediaStream();
+            pcRef.current.ontrack = (event) => {
+                event.streams[0].getTracks().forEach(track => {
+                    stream.addTrack(track);
+                });
+                
+                if (localRef.current) {
+                    localRef.current.srcObject = stream;
+                }
+                
+                setLocalStream(stream);
+                setLoading(false);
+            };
 
-        setLoading(true)
-        const stream = new MediaStream();
-        pc.ontrack = (event) => {
-            setLoading(false)
-            event.streams[0].getTracks().forEach((track) => {
-                stream.addTrack(track);
-            });
-            localRef.current.srcObject = stream;
-            setLocalStream(stream);
+            pcRef.current.onconnectionstatechange = () => {
+                if (pcRef.current.connectionState === "disconnected") {
+                    hangUp();
+                }
+            };
 
-        };
+            setConnect(true);
+        } catch (error) {
+            console.error("Setup error:", error);
+            setErrorMessage("Failed to setup connection");
+            setLoading(false);
+        }
+    };
 
-        pc.onconnectionstatechange = (event) => {
-            if (pc.connectionState === "disconnected") {
-                hangUp();
+    const hangUp = async () => {
+        try {
+            if (pcRef.current) {
+                pcRef.current.close();
             }
-        };
+            
+            if (localStream) {
+                localStream.getTracks().forEach(track => track.stop());
+                setLocalStream(null);
+            }
 
-        SetConnect(true)
-        setLocalStream(stream);
+            await Promise.all([
+                clearCollection(collection(db, REMOTE_CONTROL, MY_REMOTE_ID, "offer")),
+                clearCollection(collection(db, REMOTE_CONTROL, MY_REMOTE_ID, "iceCandidates")),
+                setDoc(doc(db, REMOTE_CONTROL, MY_REMOTE_ID), { status: false }, { merge: true }),
+                setDoc(doc(db, REMOTE_CONTROL, remoteId), {})
+            ]);
 
-    };
-
-
-    /*
-    * dispatch key events to callee
-    * x:y:ACTION_DOWN
-    * x:y:ACTION_UP
-    * x:y:ACTION_MOVE
-    */
-    const handleMouseDown = (event) => {
-        setIsDown(true)
-        dataChannel.send(`${event.nativeEvent.offsetX * scaleX}:${event.nativeEvent.offsetY * scaleY}:ACTION_DOWN`);
-    };
-
-    const handleMouseMove = (event) => {
-        // Handle mouse move event
-        if (isDown) {
-            setIsDragging(true);
-            console.log("drag", event.nativeEvent.offsetX * scaleX, event.nativeEvent.offsetY * scaleY)
-            //sen event
-            dataChannel.send(`${event.nativeEvent.offsetX * scaleX}:${event.nativeEvent.offsetY * scaleY}:ACTION_MOVE`);
+            setConnect(false);
+            setLoading(false);
+            window.location.reload();
+        } catch (error) {
+            console.error("Hangup error:", error);
+            setErrorMessage("Failed to disconnect properly");
         }
     };
-
-    const handleMouseUp = (event) => {
-        if (!isDragging) {
-            console.log("click", event.nativeEvent.offsetX, event.nativeEvent.offsetY * scaleY)
-            dataChannel.send(`${event.nativeEvent.offsetX * scaleX}:${event.nativeEvent.offsetY * scaleY}:ACTION_CLICK`);
-
-        }
-        dataChannel.send(`${event.nativeEvent.offsetX * scaleX}:${event.nativeEvent.offsetY * scaleY}:ACTION_UP`);
-
-        setIsDragging(false);
-        setIsDown(false)
-
-    };
-
-    function handleMouseOut(event) {
-        setIsDragging(false);
-        setIsDown(false)
-    }
-
 
     return (
-        <Container>
-            <Box style={{ marginBottom: '20px' }} display="flex"
-                justifyContent="center"
-                alignItems="center">
-                <TextField id="outlined-basic" label="Remote ID" error={error ? true : false} variant="outlined" style={{ marginRight: '20px' }} required onChange={(event) => {
-                    setError(false)
-                    setRemoteId(event.target.value);
-                }} />
-                <Button id="connect" variant="contained" onClick={() => setupSources()}>{loading ? "Connecting..." : connect ? 'DisConnect' : "Connect"}</Button>
-            </Box>
-
-            <Box display="flex"
-                justifyContent="center"
-                alignItems="center">
-                {
-                    loading ? <CircularProgress color="secondary" /> : null
-                }
-            </Box>
-
-            <Box display="flex"
-                justifyContent="center"
-                alignItems="center">
-                <div
-                    onMouseDown={handleMouseDown}
-                    onMouseMove={handleMouseMove}
-                    onMouseOut={handleMouseOut}
-                    style={{ width: videoWidth, height: videoHeight }}
-                    onMouseUp={handleMouseUp}>
-                    <video
-                        ref={localRef}
-                        autoPlay
-                        playsInline
-                        className="local"
-                        muted
-
+        <Container maxWidth="md">
+            <Box sx={{ my: 3 }}>
+                <Box sx={{ mb: 2 }} display="flex" gap={2} alignItems="center" justifyContent="center">
+                    <TextField
+                        error={error}
+                        label="Remote ID"
+                        variant="outlined"
+                        required
+                        helperText={error ? "Remote ID is required" : ""}
+                        onChange={(e) => {
+                            setError(false);
+                            setErrorMessage("");
+                            setRemoteId(e.target.value);
+                        }}
                     />
-                </div>
+                    <Button
+                        variant="contained"
+                        onClick={setupSources}
+                        disabled={loading}
+                    >
+                        {loading ? "Connecting..." : connect ? 'Disconnect' : "Connect"}
+                    </Button>
+                </Box>
 
+                {errorMessage && (
+                    <Alert severity="error" sx={{ mb: 2 }}>
+                        {errorMessage}
+                    </Alert>
+                )}
+
+                {loading && (
+                    <Box display="flex" justifyContent="center" sx={{ my: 2 }}>
+                        <CircularProgress />
+                    </Box>
+                )}
+
+                <Box
+                    sx={{
+                        display: 'flex',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        bgcolor: 'background.paper',
+                        borderRadius: 1,
+                        overflow: 'hidden'
+                    }}
+                >
+                    <div
+                        style={{
+                            width: dimensions.width,
+                            height: dimensions.height,
+                            position: 'relative'
+                        }}
+                        onMouseDown={(e) => {
+                            setIsDown(true);
+                            handleMouseEvent(e, 'ACTION_DOWN');
+                        }}
+                        onMouseMove={(e) => {
+                            if (isDown) {
+                                setIsDragging(true);
+                                handleMouseEvent(e, 'ACTION_MOVE');
+                            }
+                        }}
+                        onMouseUp={(e) => {
+                            if (!isDragging) {
+                                handleMouseEvent(e, 'ACTION_CLICK');
+                            }
+                            handleMouseEvent(e, 'ACTION_UP');
+                            setIsDragging(false);
+                            setIsDown(false);
+                        }}
+                        onMouseLeave={() => {
+                            setIsDragging(false);
+                            setIsDown(false);
+                        }}
+                    >
+                        <video
+                            ref={localRef}
+                            autoPlay
+                            playsInline
+                            muted
+                            style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'contain'
+                            }}
+                        />
+                    </div>
+                </Box>
             </Box>
         </Container>
-    )
+    );
 }
-
-
 
 export default Remote;
