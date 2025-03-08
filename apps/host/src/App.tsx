@@ -2,8 +2,8 @@ import React, { useRef, useState } from "react";
 import { Button, Card } from "@webrtc-project/ui-components";
 import { RequestManager } from "./connection/requestManager";
 
-const CLIENT_URL = "http://localhost:3001";
-const CLIENT_ORIGIN = "http://localhost:3001";
+const CLIENT_URL = "http://localhost:4000";
+const CLIENT_ORIGIN = "http://localhost:4000";
 
 function App() {
   const requestManager = useRef<RequestManager | null>(null);

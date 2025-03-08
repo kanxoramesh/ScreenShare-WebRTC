@@ -17,8 +17,8 @@ const logger = createLogger({
   ),
   transports: [
     new transports.Console(),
-    ...(LOGGING_CONFIG.FILE_LOGGING ? 
-      [new transports.File({ filename: LOGGING_CONFIG.LOG_FILE_PATH })] : 
+    ...(LOGGING_CONFIG.FILE_LOGGING ?
+      [new transports.File({ filename: LOGGING_CONFIG.LOG_FILE_PATH })] :
       [])
   ]
 });
@@ -36,7 +36,7 @@ app.use(helmet());
 // Apply rate limiting
 if (SECURITY_CONFIG.RATE_LIMIT_MAX > 0) {
   app.use(rateLimit({
-    windowMs: SECURITY_CONFIG.RATE_LIMIT_WINDOW_MS, 
+    windowMs: SECURITY_CONFIG.RATE_LIMIT_WINDOW_MS,
     max: SECURITY_CONFIG.RATE_LIMIT_MAX,
     standardHeaders: true,
     legacyHeaders: false,
@@ -66,24 +66,31 @@ io.on("connection", (socket) => {
     socket.disconnect(true);
     return;
   }
-  
+
   connectionCount++;
   logger.info(`Client connected: ${socket.id}, Total connections: ${connectionCount}`);
 
   // Register client
-  socket.on("register", (data) => {
+  socket.on("join", (data) => {
     try {
-      const { clientId, role } = data;
-      
-      if (!clientId || !role) {
+      const { clientId,role } = data;
+      const hostIP = "192.168.1.100"; // Replace with your actual host IP
+      const clientIP = socket.handshake.address; // Get the client's IP
+      logger.info(`clientIP`,clientIP);
+
+      if (!clientId) {
         logger.warn(`Invalid registration data from ${socket.id}`);
         return;
       }
-      
+
+      // Determine role based on IP
+      //const role = clientIP === hostIP ? "host" : "client";
+
       clients.set(clientId, { socket, role });
-      logger.info(`Client ${clientId} registered as ${role}`);
-      socket.emit("registered", { success: true });
-      
+      logger.info(`Client ${clientId} registered as ${role} (IP: ${clientIP})`);
+
+      socket.emit("registered", { success: true, role });
+
       // Notify hosts when new clients join
       if (role === "client") {
         for (const [id, client] of clients.entries()) {
@@ -92,7 +99,7 @@ io.on("connection", (socket) => {
           }
         }
       }
-      
+
       // Notify clients when hosts are available
       if (role === "host") {
         for (const [id, client] of clients.entries()) {
@@ -111,12 +118,13 @@ io.on("connection", (socket) => {
   socket.on("offer", (data) => {
     try {
       const { to, from, offer } = data;
-      
+      logger.info(`Offer comming from ${from} to ${to}`)
+
       if (!to || !from || !offer) {
         logger.warn(`Invalid offer data from ${from}`);
         return;
       }
-      
+
       const target = clients.get(to);
       if (target) {
         logger.debug(`Forwarding offer from ${from} to ${to}`);
@@ -133,12 +141,13 @@ io.on("connection", (socket) => {
   socket.on("answer", (data) => {
     try {
       const { to, from, answer } = data;
-      
+
       if (!to || !from || !answer) {
         logger.warn(`Invalid answer data from ${from}`);
         return;
       }
-      
+      logger.info(`Answer from client from: ${from} to ${to} `)
+
       const target = clients.get(to);
       if (target) {
         logger.debug(`Forwarding answer from ${from} to ${to}`);
@@ -154,12 +163,12 @@ io.on("connection", (socket) => {
   socket.on("ice-candidate", (data) => {
     try {
       const { to, from, candidate } = data;
-      
+
       if (!to || !from || !candidate) {
         logger.warn(`Invalid ICE candidate data from ${from}`);
         return;
       }
-      
+
       const target = clients.get(to);
       if (target) {
         logger.debug(`Forwarding ICE candidate from ${from} to ${to}`);
@@ -175,14 +184,14 @@ io.on("connection", (socket) => {
     connectionCount--;
     logger.info(`Client disconnected: ${socket.id}, Total connections: ${connectionCount}`);
     let disconnectedId = null;
-    
+
     // Find and remove the disconnected client
     for (const [id, client] of clients.entries()) {
       if (client.socket.id === socket.id) {
         disconnectedId = id;
         const role = client.role;
         clients.delete(id);
-        
+
         // Notify other clients about disconnection
         for (const [peerId, peerClient] of clients.entries()) {
           if (role === "host") {
@@ -220,10 +229,10 @@ app.get("/stats", (req, res) => {
   if (SERVER_CONFIG.NODE_ENV === "production" && SECURITY_CONFIG.AUTH_ENABLED) {
     return res.status(401).json({ error: "Unauthorized" });
   }
-  
+
   const hosts = [];
   const clientsArr = [];
-  
+
   for (const [id, client] of clients.entries()) {
     if (client.role === "host") {
       hosts.push(id);
@@ -231,7 +240,7 @@ app.get("/stats", (req, res) => {
       clientsArr.push(id);
     }
   }
-  
+
   res.json({
     totalConnections: connectionCount,
     hosts: {
