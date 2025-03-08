@@ -47,6 +47,12 @@ importers:
       '@webrtc-project/ui-components':
         specifier: workspace:*
         version: link:../../packages/ui-components
+      dotenv:
+        specifier: ^16.0.3
+        version: 16.4.7
+      dotenv-expand:
+        specifier: ^10.0.0
+        version: 10.0.0
       react:
         specifier: ^18.2.0
         version: 18.3.1
@@ -81,6 +87,12 @@ importers:
       '@webrtc-project/ui-components':
         specifier: workspace:*
         version: link:../../packages/ui-components
+      dotenv:
+        specifier: ^16.0.3
+        version: 16.4.7
+      dotenv-expand:
+        specifier: ^10.0.0
+        version: 10.0.0
       react:
         specifier: ^18.2.0
         version: 18.3.1
@@ -877,6 +889,14 @@ packages:
   doctrine@3.0.0:
     resolution: {integrity: sha512-yS+Q5i3hBf7GBkd4KG8a7eBNNWNGLTaEwwYWUijIYM7zrlYDM0BFXHjjPWlWZ1Rg7UaddZeIDmi9jF3HmqiQ2w==}
     engines: {node: '>=6.0.0'}
+
+  dotenv-expand@10.0.0:
+    resolution: {integrity: sha512-GopVGCpVS1UKH75VKHGuQFqS1Gusej0z4FyQkPdwjil2gNIv+LNsqBlboOzpJFZKVT95GkCyWJbBSdFEFUWI2A==}
+    engines: {node: '>=12'}
+
+  dotenv@16.4.7:
+    resolution: {integrity: sha512-47qPchRCykZC03FhkYAhrvwU4xDBFIj1QPqaarj6mdM/hgUzfPHcpkHJOn3mJAufFeeAxAzeGsr5X0M4k6fLZQ==}
+    engines: {node: '>=12'}
 
   dynamic-dedupe@0.3.0:
     resolution: {integrity: sha512-ssuANeD+z97meYOqd50e04Ze5qp4bPqo8cCkI4TRjZkzAUgIDTrXV1R8QCdINpiI+hw14+rYazvTRdQrz0/rFQ==}
@@ -2993,6 +3013,10 @@ snapshots:
   doctrine@3.0.0:
     dependencies:
       esutils: 2.0.3
+
+  dotenv-expand@10.0.0: {}
+
+  dotenv@16.4.7: {}
 
   dynamic-dedupe@0.3.0:
     dependencies:

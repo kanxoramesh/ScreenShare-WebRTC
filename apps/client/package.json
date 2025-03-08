@@ -11,7 +11,9 @@
     "@webrtc-project/shared-types": "workspace:*",
     "@webrtc-project/ui-components": "workspace:*",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "dotenv": "^16.0.3",
+    "dotenv-expand": "^10.0.0"
   },
   "devDependencies": {
     "@types/react": "^18.0.25",

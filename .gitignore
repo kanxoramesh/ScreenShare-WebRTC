@@ -8,3 +8,11 @@ build/
 .env.test.local
 .env.production.local
 .pnpm-debug.log*
+# Environment files
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+# Keep examples in git
+!.env.example
