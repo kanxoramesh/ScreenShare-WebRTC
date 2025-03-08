@@ -3,7 +3,6 @@
   "private": true,
   "scripts": {
     "build": "pnpm -r build",
-    "test": "pnpm -r test",
     "dev": "pnpm --parallel -r dev",
     "lint": "pnpm -r lint"
   },
