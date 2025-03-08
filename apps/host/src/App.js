@@ -28,6 +28,6 @@ function App() {
             setResponse(`Error: ${error instanceof Error ? error.message : String(error)}`);
         }
     };
-    return (_jsxs("div", { className: "container", children: [_jsx("h1", { children: "Host Application" }), _jsxs(Card, { title: "Client Connection", children: [_jsx("div", { className: "iframe-container", children: _jsx("iframe", { ref: iframeRef, src: CLIENT_URL, title: "Client Application", width: "100%", height: "300" }) }), _jsxs("div", { className: "controls", children: [_jsx(Button, { onClick: initConnection, disabled: connected, children: "Connect to Client" }), _jsx(Button, { onClick: sendRequest, disabled: !connected, variant: "secondary", children: "Send Request" })] })] }), response && (_jsx(Card, { title: "Response", children: _jsx("pre", { children: response }) }))] }));
+    return (_jsxs("div", { className: "container", children: [_jsx("h1", { children: "Host Application" }), _jsxs(Card, { title: "Client Connection", children: [_jsx("div", { className: "iframe-container", children: _jsx("iframe", { ref: iframeRef, src: CLIENT_URL, title: "Client Application", width: "100%", height: "300" }) }), _jsxs("div", { className: "controls", children: [_jsx(Button, { onClick: initConnection, ...{ disabled: connected }, children: "Connect to Client" }), _jsx(Button, { onClick: sendRequest, ...{ disabled: !connected }, variant: "secondary", children: "Send Request" })] })] }), response && (_jsx(Card, { title: "Response", children: _jsx("pre", { children: response }) }))] }));
 }
 export default App;

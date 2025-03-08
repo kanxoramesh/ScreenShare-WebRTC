@@ -21,7 +21,7 @@ function App() {
 
   const sendRequest = async () => {
     if (!requestManager.current) return;
-    
+
     try {
       const result = await requestManager.current.sendRequest("PING", { message: "Hello from host!" });
       setResponse(JSON.stringify(result, null, 2));
@@ -34,10 +34,10 @@ function App() {
   return (
     <div className="container">
       <h1>Host Application</h1>
-      
+
       <Card title="Client Connection">
         <div className="iframe-container">
-          <iframe 
+          <iframe
             ref={iframeRef}
             src={CLIENT_URL}
             title="Client Application"
@@ -45,25 +45,26 @@ function App() {
             height="300"
           />
         </div>
-        
+
         <div className="controls">
-          <Button 
+          <Button
             onClick={initConnection}
-            disabled={connected}
+            {...{ disabled: connected } as any}
           >
             Connect to Client
           </Button>
-          
-          <Button 
+
+          <Button
             onClick={sendRequest}
-            disabled={!connected}
+            {...{ disabled: !connected } as any}
+
             variant="secondary"
           >
             Send Request
           </Button>
         </div>
       </Card>
-      
+
       {response && (
         <Card title="Response">
           <pre>{response}</pre>
