@@ -1,10 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import Client from "./Client";
+import { MaterialWrapper } from "./material";
 
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <Client />
-  </React.StrictMode>
+const root = ReactDOM.createRoot(document.getElementById("root")!);
+root.render(
+  <MaterialWrapper>
+    <App />
+  </MaterialWrapper>
 );

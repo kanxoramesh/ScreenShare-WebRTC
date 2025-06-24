@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { io, Socket } from 'socket.io-client';
+import { useHostSocket, ClientInfo } from './hooks/useHostSocket';
+import { io } from 'socket.io-client';
 
 type Message = {
     text: string;
@@ -16,31 +17,72 @@ type ActiveCall = {
 const Host: React.FC = () => {
     const [connected, setConnected] = useState<boolean>(false);
     const [username, setUsername] = useState<string>('');
-    const [users, setUsers] = useState<string[]>([]);
+    const [clients, setClients] = useState<ClientInfo[]>([]);
     const [activeCall, setActiveCall] = useState<ActiveCall | null>(null);
     const [messages, setMessages] = useState<Message[]>([]);
     const [newMessage, setNewMessage] = useState<string>('');
-
-    const socketRef = useRef<Socket | null>(null);
+    const [connectedClient, setConnectedClient] = useState<ClientInfo | null>(null);
+    const [callStatus, setCallStatus] = useState<Record<string, 'idle' | 'calling' | 'connected'>>({});
     const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
     const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
     const dataChannelRef = useRef<RTCDataChannel | null>(null);
 
+    // Handler functions must be declared before useHostSocket
+    const log = (...args: any[]) => {
+        // eslint-disable-next-line no-console
+        console.log('[SOCKET EVENT]', ...args);
+    };
+    const handleReceiveAnswer = async (data: { answer: RTCSessionDescriptionInit; from: string }) => {
+        log('answer', data);
+        if (peerConnectionRef.current) {
+            await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data.answer));
+            setActiveCall({ userId: data.from, status: 'connected' });
+            setCallStatus(prev => ({ ...prev, [data.from]: 'connected' }));
+        }
+    };
+    const handleReceiveICECandidate = async (data: { candidate: RTCIceCandidateInit }) => {
+        log('ice-candidate', data);
+        if (peerConnectionRef.current) {
+            await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
+        }
+    };
+    const handleUserDisconnected = (userId: string) => {
+        log('user-disconnected', userId);
+        if (activeCall?.userId === userId) {
+            endCall();
+        }
+    };
+
+    // Modular socket logic
+    const socketRef = useHostSocket(
+        username,
+        (clientList) => setClients(clientList),
+        handleReceiveAnswer,
+        handleReceiveICECandidate,
+        handleUserDisconnected
+    );
+
     // Initialize Socket.io connection
     useEffect(() => {
+        log('useEffect: username', username);
         socketRef.current = io('http://localhost:4000');
 
-        socketRef.current.on("client-joined", ({clientId}) => {
-            console.log("Client joined: ",clientId)
-            if (clientId !== username) {
-              setUsers((prevUsers) => [...prevUsers, clientId]); // Correctly update state with a new array
-            }
-          });
+        if (socketRef.current) {
+            socketRef.current.on("client-joined", ({clientId}) => {
+                log('client-joined', clientId);
+                if (clientId !== username) {
+                  setClients((prevUsers) => [...prevUsers, clientId]);
+                }
+            });
 
-        socketRef.current.on('offer', handleReceiveOffer);
-        socketRef.current.on('answer', handleReceiveAnswer);
-        socketRef.current.on('ice-candidate', handleReceiveICECandidate);
-        socketRef.current.on('user-disconnected', handleUserDisconnected);
+            socketRef.current.on('answer', handleReceiveAnswer);
+            socketRef.current.on('ice-candidate', handleReceiveICECandidate);
+            socketRef.current.on('user-disconnected', handleUserDisconnected);
+            socketRef.current.on('client-list', (clientList) => log('client-list', clientList));
+            socketRef.current.on('client-join-request', (data) => log('client-join-request', data));
+            socketRef.current.on('offer', (data) => log('offer', data));
+            socketRef.current.on('call-client', (data) => log('call-client', data));
+        }
 
         return () => {
             if (peerConnectionRef.current) {
@@ -53,7 +95,6 @@ const Host: React.FC = () => {
     // Join the room with username
     const handleJoin = async () => {
         if (username.trim()) {
-            socketRef.current?.emit('join', { clientId:username, role:"host" });
             setConnected(true);
         }
     };
@@ -61,6 +102,7 @@ const Host: React.FC = () => {
     // Create and send an offer
     const callUser = async (targetUserId: string) => {
         try {
+            setCallStatus(prev => ({ ...prev, [targetUserId]: 'calling' }));
             const configuration: RTCConfiguration = {
                 iceServers: [
                     { urls: 'stun:stun.l.google.com:19302' },
@@ -94,47 +136,19 @@ const Host: React.FC = () => {
             socketRef.current?.emit('offer', { to:targetUserId, from:username, offer });
 
             setActiveCall({ userId: targetUserId, status: 'calling' });
+            const client = clients.find(c => c.clientId === targetUserId);
+            setConnectedClient(client || null);
         } catch (error) {
+            setCallStatus(prev => ({ ...prev, [targetUserId]: 'idle' }));
             console.error('Error calling user:', error);
-        }
-    };
-
-    // Handle incoming call offers
-    const handleReceiveOffer = async (data: { offer: RTCSessionDescriptionInit; from: string; fromUsername: string }) => {
-        if (peerConnectionRef.current) {
-            console.warn('Already in a call, rejecting offer');
-            return;
-        }
-
-        setActiveCall({ userId: data.from, status: 'incoming', username: data.fromUsername, offer: data.offer });
-    };
-
-
-    // Handle received answer
-    const handleReceiveAnswer = async (data: { answer: RTCSessionDescriptionInit; from: string }) => {
-        
-        if (peerConnectionRef.current) {
-            await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data.answer));
-            setActiveCall({ userId: data.from, status: 'connected' });
-        }
-    };
-
-    // Handle ICE candidates
-    const handleReceiveICECandidate = async (data: { candidate: RTCIceCandidateInit }) => {
-        if (peerConnectionRef.current) {
-            await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
-        }
-    };
-
-    // Handle user disconnected
-    const handleUserDisconnected = (userId: string) => {
-        if (activeCall?.userId === userId) {
-            endCall();
         }
     };
 
     // End the call
     const endCall = () => {
+        if (activeCall) {
+            setCallStatus(prev => ({ ...prev, [activeCall.userId]: 'idle' }));
+        }
         peerConnectionRef.current?.close();
         peerConnectionRef.current = null;
         setActiveCall(null);
@@ -176,27 +190,49 @@ const Host: React.FC = () => {
                 </button>
             </div>
         ) : (
+            <>
+            <div className="text-center mb-4">
+                <span className="font-semibold">Your name:</span> <b>{username}</b>
+                {connectedClient && (
+                  <>
+                    <span className="ml-4 font-semibold">Connected to:</span> <b>{connectedClient.username}</b>
+                  </>
+                )}
+            </div>
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                 {/* Left column - User list */}
                 <div className="p-4 border rounded">
                     <h2 className="text-xl font-bold mb-4">Online Users</h2>
-                    {users.length === 0 ? (
+                    {clients.length === 0 ? (
                         <p>No other users online</p>
                     ) : (
                         <ul>
-                            {users.map((user, index) => (
-                                <li key={index} className="p-2 hover:bg-gray-100 rounded flex justify-between">
-                                    <span>{user}</span>
-                                    {!activeCall && (
-                                        <button
-                                            onClick={() => callUser(user)}
-                                            className="px-2 py-1 bg-green-500 text-white rounded text-sm"
-                                        >
-                                            Call
-                                        </button>
-                                    )}
-                                </li>
-                            ))}
+                            {clients.map((client, index) => {
+                                const status = callStatus[client.clientId] || 'idle';
+                                let buttonLabel = 'Call';
+                                let buttonDisabled = false;
+                                if (status === 'calling') {
+                                  buttonLabel = 'Calling...';
+                                  buttonDisabled = true;
+                                } else if (status === 'connected') {
+                                  buttonLabel = 'Connected';
+                                  buttonDisabled = true;
+                                } else if (activeCall) {
+                                  buttonDisabled = true;
+                                }
+                                return (
+                                  <li key={client.clientId} className="p-2 hover:bg-gray-100 rounded flex justify-between">
+                                    <span>{client.username} <span className="text-xs text-gray-400">({client.clientId})</span></span>
+                                    <button
+                                      onClick={() => callUser(client.clientId)}
+                                      className={`px-2 py-1 rounded text-sm ${status === 'connected' ? 'bg-blue-500 text-white' : 'bg-green-500 text-white'}`}
+                                      disabled={buttonDisabled}
+                                    >
+                                      {buttonLabel}
+                                    </button>
+                                  </li>
+                                );
+                            })}
                         </ul>
                     )}
                 </div>
@@ -281,6 +317,7 @@ const Host: React.FC = () => {
                     )}
                 </div>
             </div>
+            </>
         )}
     </div>;
 };

@@ -6,7 +6,7 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { createLogger, format, transports } from "winston";
-import { SERVER_CONFIG, SECURITY_CONFIG, LOGGING_CONFIG } from "../config";
+import { SERVER_CONFIG, SECURITY_CONFIG, LOGGING_CONFIG } from ".././config";
 
 // Set up logger
 const logger = createLogger({
@@ -58,6 +58,18 @@ const io = new Server(server, {
 const clients = new Map();
 let connectionCount = 0;
 
+function broadcastClientList() {
+  const clientList = Array.from(clients.entries())
+    .filter(([_, c]) => c.role === "client")
+    .map(([clientId, c]) => ({ clientId, username: c.username }));
+  for (const [id, client] of clients.entries()) {
+    if (client.role === "host") {
+      logger.info(`[EMIT] client-list to host ${id}: ${JSON.stringify(clientList)}`);
+      client.socket.emit("client-list", clientList);
+    }
+  }
+}
+
 // Set up Socket.IO connection handling
 io.on("connection", (socket) => {
   // Check if max connections reached
@@ -73,7 +85,7 @@ io.on("connection", (socket) => {
   // Register client
   socket.on("join", (data) => {
     try {
-      const { clientId,role } = data;
+      const { clientId, role, username } = data;
       const hostIP = "192.168.1.100"; // Replace with your actual host IP
       const clientIP = socket.handshake.address; // Get the client's IP
       logger.info(`clientIP`,clientIP);
@@ -86,27 +98,27 @@ io.on("connection", (socket) => {
       // Determine role based on IP
       //const role = clientIP === hostIP ? "host" : "client";
 
-      clients.set(clientId, { socket, role });
+      clients.set(clientId, { socket, role, username });
       logger.info(`Client ${clientId} registered as ${role} (IP: ${clientIP})`);
 
       socket.emit("registered", { success: true, role });
+      logger.info(`check this`);
 
       // Notify hosts when new clients join
       if (role === "client") {
+        logger.info(`Client ${clientId} (IP: ${clientIP}), Total clients: ${clients.size}`);
+
         for (const [id, client] of clients.entries()) {
           if (client.role === "host") {
-            client.socket.emit("client-joined", { clientId });
+            logger.info(`[EMIT] client-join-request: { clientId: ${clientId}, username: ${username} } to host ${id}`);
+            client.socket.emit("client-join-request", { clientId, username });
           }
         }
+        broadcastClientList();
       }
-
       // Notify clients when hosts are available
       if (role === "host") {
-        for (const [id, client] of clients.entries()) {
-          if (client.role === "client") {
-            client.socket.emit("host-available", { hostId: clientId });
-          }
-        }
+        broadcastClientList();
       }
     } catch (error) {
       logger.error(`Error during client registration: ${error}`);
@@ -163,6 +175,7 @@ io.on("connection", (socket) => {
   socket.on("ice-candidate", (data) => {
     try {
       const { to, from, candidate } = data;
+      logger.info(`ice candidates: ${JSON.stringify(data)}`)
 
       if (!to || !from || !candidate) {
         logger.warn(`Invalid ICE candidate data from ${from}`);
@@ -176,6 +189,22 @@ io.on("connection", (socket) => {
       }
     } catch (error) {
       logger.error(`Error handling ICE candidate: ${error}`);
+    }
+  });
+
+  socket.on("call-client", ({ to, from }) => {
+    const client = clients.get(to);
+    if (client) {
+      client.socket.emit("call-client", { from });
+    }
+  });
+
+  socket.on("call-accepted", (data) => {
+    const { to, from } = data;
+    const target = clients.get(to);
+    if (target) {
+      logger.info(`[EMIT] call-accepted from ${from} to host ${to}`);
+      target.socket.emit("call-accepted", { from });
     }
   });
 

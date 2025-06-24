@@ -39,7 +39,6 @@ const Client: React.FC = () => {
         socketRef.current = io('http://localhost:4000');
 
         socketRef.current.on('offer', handleReceiveOffer);
-        socketRef.current.on('answer', handleReceiveAnswer);
         socketRef.current.on('ice-candidate', handleReceiveICECandidate);
         socketRef.current.on('user-disconnected', handleUserDisconnected);
 
@@ -52,7 +51,7 @@ const Client: React.FC = () => {
 
     const startMedia = async (): Promise<MediaStream | null> => {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
             setLocalStream(stream);
             if (localVideoRef.current) {
                 localVideoRef.current.srcObject = stream;
@@ -68,8 +67,6 @@ const Client: React.FC = () => {
 
     const handleJoin = async () => {
         if (username.trim()) {
-            const stream = await startMedia();
-            setLocalStream(stream);
             socketRef.current?.emit('join', { clientId: username, role: "client" });
             setConnected(true);
         }
@@ -94,7 +91,7 @@ const Client: React.FC = () => {
         try {
             setActiveCall({ userId: data.from, status: 'incoming', username: data.from, offer: data.offer });
             addLog(`received offer "userId": ${data.from}, status: 'incoming', username: ${data.from}, offer: ${JSON.stringify(data.offer)} }`);
-            acceptCall(data.offer,data.from)
+            acceptCall(data.offer, data.from)
         } catch (error) {
             console.error('Error handling offer:', error);
             addLog(`EError handling offer: ${error}`);
@@ -102,7 +99,7 @@ const Client: React.FC = () => {
         }
     };
 
-    const acceptCall = async (offer:RTCSessionDescriptionInit,from:string) => {
+    const acceptCall = async (offer: RTCSessionDescriptionInit, from: string) => {
         try {
             addLog(`activeCall: ${JSON.stringify(activeCall)} }`);
 
@@ -110,18 +107,21 @@ const Client: React.FC = () => {
                 iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
             };
             peerConnectionRef.current = new RTCPeerConnection(configuration);
-            peerConnectionRef.current.ontrack = (event) => {
-                if (remoteVideoRef.current && event.streams[0]) {
-                    remoteVideoRef.current.srcObject = event.streams[0];
-                }
-            };
 
             dataChannelRef.current = peerConnectionRef.current.createDataChannel('chat');
             setupDataChannel(dataChannelRef.current);
-            localStream?.getTracks().forEach(track => peerConnectionRef.current?.addTrack(track, localStream));
+            const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+            setLocalStream(stream);
+            if (localVideoRef.current) {
+                localVideoRef.current.srcObject = stream;
+            }
+            addLog(`Tracks len ${stream?.getTracks().length}`)
+            stream?.getTracks().forEach(track => peerConnectionRef.current?.addTrack(track, stream));
+            addLog(`ice-candidate to from send: ${{ to: from, from: username }}`);
             peerConnectionRef.current.onicecandidate = (event) => {
+                addLog(`onicecandidate: ${JSON.stringify(event.candidate)} }`);
                 if (event.candidate) {
-                    socketRef.current?.emit('ice-candidate', { to: from, from : username,candidate: event.candidate });
+                    socketRef.current?.emit('ice-candidate', { to: from, from: username, candidate: event.candidate });
                 }
             };
             await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(offer));
@@ -131,22 +131,12 @@ const Client: React.FC = () => {
             socketRef.current?.emit('answer', { from: username, to: from, answer });
             setActiveCall({ userId: from, offer: offer, status: 'connected' });
 
- 
+
 
         } catch (error) {
             console.error('Error accepting call:', error);
             addLog(`Error sending Answer : ${error}`)
 
-        }
-    };
-
-    const handleReceiveAnswer = async (data: { answer: RTCSessionDescriptionInit; from: string }) => {
-        try {
-            if (!peerConnectionRef.current) return;
-            await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(data.answer));
-            setActiveCall({ userId: data.from, status: 'connected' });
-        } catch (error) {
-            console.error('Error handling answer:', error);
         }
     };
 
@@ -176,12 +166,12 @@ const Client: React.FC = () => {
                     <button onClick={handleJoin}>Join</button>
                 </div>
             ) : (
-                <div>
-                    <video ref={localVideoRef} autoPlay muted playsInline />
-                    <video ref={remoteVideoRef} autoPlay playsInline />
-                </div>
+                <div></div>
             )
             }
+            <div>
+                <video ref={localVideoRef} autoPlay muted playsInline />
+            </div>
             <div>      <Card title="Communication Logs">
                 <div className="logs">
                     {logs.length === 0 ? (
